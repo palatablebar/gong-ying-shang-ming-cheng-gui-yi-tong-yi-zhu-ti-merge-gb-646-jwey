@@ -9,6 +9,7 @@ from ...manifest import build_manifest
 from ...reasons import code_table as reason_code_table
 from ...reasons import V_UNKNOWN_RUN
 from ..m5_clusters import service as cluster_service
+from ..m8_packages import service as package_service
 from . import manifest_out, master_out, quarantine_out
 
 
@@ -54,4 +55,6 @@ def manifest_json(run_id: str) -> str:
     cluster_service.ensure_clusters(run_id)
     ledger = cluster_service.reconcile(run_id)
     manifest = build_manifest(run, json.loads(run["files_json"]), ledger, reason_code_table())
+    blockers = package_service.publish_blockers(run_id)
+    manifest["publish"] = {"ok": not blockers, "blockers": blockers}
     return manifest_out.render(manifest)

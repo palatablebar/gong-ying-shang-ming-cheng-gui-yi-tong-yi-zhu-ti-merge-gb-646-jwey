@@ -8,6 +8,7 @@ from ... import store
 from ...errors import NotFound
 from ...reasons import C_CLUSTER_CONFLICT, P_TAX_CONFLICT, V_UNKNOWN_RUN
 from ..m4_pairs import service as pair_service
+from ..m8_packages import service as package_service
 from . import allocate, represent, unionfind
 
 
@@ -16,12 +17,16 @@ def _sum(records) -> Decimal:
 
 
 def ensure_clusters(run_id: str) -> dict:
-    """总是重算：复核决定写入后，簇与金额立即一致。"""
+    """总是重算：复核决定写入后，簇与金额立即一致。
+
+    只采用当前有效工作包覆盖的决定：上游补充重建后，失效包里的
+    旧决定不参与合并，保证发布口径与派单口径一致。
+    """
     pair_service.ensure_pairs(run_id)
     records = {record["supplier_id"]: record for record in store.list_records(run_id)}
     if not records:
         raise NotFound(V_UNKNOWN_RUN, run_id)
-    decisions = {item["pair_id"]: item for item in store.list_decisions(run_id)}
+    decisions = {item["pair_id"]: item for item in package_service.valid_decisions(run_id)}
     dsu = unionfind.DisjointSet()
     for supplier_id in records:
         dsu.add(supplier_id)

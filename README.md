@@ -15,7 +15,10 @@
 - 合并簇：并查集合并，代表元取税号最小者，簇内税号冲突标记交复核，
   簇金额与成员分摊用 Decimal 逐分守恒。
 - 复核：队列按得分降序，决定带版本乐观锁，写入后簇立即重算；引用异常四类可查。
-- 导出：主数据、成员分摊、隔离区、冲突、运行清单（含 `run_id` 与输入 sha256）。
+- 工作包：候选关系按证据环（双连通分量）拆分派给复核组，环内禁止拆开；
+  每张关系只有一个有效责任人；上游补充后未受影响包的责任人与决定原样继承。
+- 导出：主数据、成员分摊、隔离区、冲突、运行清单（含 `run_id` 与输入 sha256），
+  只采用当前有效包的决定，清单带发布阻断段。
 
 ## 模块清单
 
@@ -28,11 +31,13 @@
 | M5 等价类合并 | `POST /api/clusters` | 并查集、代表元、最大余额分摊 |
 | M6 复核批次 | `POST /api/reviews/{pair_id}/decision` | 队列、版本锁、引用一致性 |
 | M7 主数据导出 | `GET /api/export/master.csv` | CSV 与运行清单，UTF-8 BOM |
+| M8 工作包派单 | `POST /api/packages/sync` | 证据环拆分、确定性派组、跨批继承 |
 
 ## 页面
 
 `/` 台账总览（含采信诊断与隔离区）、`/normalize` 名称归一、`/pairs` 候选对、
-`/clusters` 合并簇、`/reviews` 复核队列、`/export` 主数据导出。
+`/clusters` 合并簇（含簇内关系）、`/reviews` 复核队列、`/packages` 复核工作包、
+`/export` 主数据导出（含发布阻断）。
 接口文档在 `/docs`。
 
 ## 核心规则
@@ -42,6 +47,10 @@
 3. 判定优先级：税号冲突（拒绝） > 税号相同（自动） > 城市不同（复核） > 得分分档。
 4. 代表元 = 簇内税号最小者；无税号取供应商号最小者。
 5. 簇金额 = Σ成员金额（Decimal）；成员分摊按比例取整到分后最大余额补齐。
+6. 拆分派单：同一证据环（双连通分量）内的关系必须同组裁决，禁止拆开；
+   仅共享单个主体、不共环的关系允许拆给不同组；每张关系只有一个有效责任人。
+7. 上游补充重建：签名未变的工作包整体继承责任人与已完成决定；签名变化的
+   包重新派单继续裁决；发布只采用当前有效包的决定。
 
 字段类型、单位、空值与哨兵、时间与区间定义见 `docs/DATA-DICTIONARY.md`；
 陷阱清单与对账规则见 `docs/DEPTH.md`；运维动作见 `docs/RUNBOOK.md`。
@@ -55,7 +64,8 @@ docker compose exec -T app python -m pytest -q
 ```
 
 宿主机访问 <http://127.0.0.1:18205>。样例数据在 `sample_data/`，六个文件分别覆盖
-主档、别名、GB18030、金额与引用、仅表头、全空行。
+主档、别名、GB18030、金额与引用、仅表头、全空行；另有 `erp_g_supplement.csv` 与
+`erp_h_intrusive.csv` 两个补充批样例，用于演示上游补充后的工作包继承与重派。
 
 ## 演示步骤
 
@@ -63,9 +73,10 @@ docker compose exec -T app python -m pytest -q
 2. `/` 下方：逐文件诊断与隔离区两行带原因码与原始行号。
 3. `/normalize`：原名到归一名的对照，试算框可现场验证一条名称。
 4. `/pairs`：按结论过滤候选对，看得分与依据字段。
-5. `/clusters`：合并簇与成员分摊，`C-0009` 标税号冲突。
+5. `/clusters`：合并簇与成员分摊，`C-0009` 标税号冲突，展开看簇内关系。
 6. `/reviews`：三项带复核，判定后簇数立即变化；引用异常五条。
-7. `/export`：下载主数据、成员分摊、隔离区、冲突与运行清单。
+7. `/packages`：三个工作包与责任人；模拟上游补充（见运行手册）后看继承与新派。
+8. `/export`：下载主数据、成员分摊、隔离区、冲突与运行清单；发布阻断逐包列出。
 
 ## 测试
 
@@ -73,16 +84,16 @@ docker compose exec -T app python -m pytest -q
 docker compose exec -T app python -m pytest -q
 ```
 
-81 条测试：每个模块 8 到 13 条，另有端到端 4 条与不变量 5 条。
+102 条测试：每个模块 8 到 21 条，另有端到端 4 条与不变量 5 条。
 
 ## 目录
 
 ```text
 app/main.py config.py errors.py reasons.py manifest.py store.py web.py
-app/modules/m1_intake … m7_export/{handler.py service.py 规则与读写出}
-app/templates/{base.html + 6 页}
+app/modules/m1_intake … m8_packages/{handler.py service.py 规则与读写出}
+app/templates/{base.html + 7 页}
 app/static/{theme.css layout.css components.css app.js table.js charts.js}
 docs/{DEPTH.md DATA-DICTIONARY.md RUNBOOK.md}
-sample_data/ 六个脏样例
-tests/{conftest.py test_intake … test_export.py test_e2e.py test_invariants.py fixtures/}
+sample_data/ 六个脏样例 + 两个补充批样例
+tests/{conftest.py test_intake … test_packages.py test_e2e.py test_invariants.py fixtures/}
 ```

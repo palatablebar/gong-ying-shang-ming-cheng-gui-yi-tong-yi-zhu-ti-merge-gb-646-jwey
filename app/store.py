@@ -111,15 +111,40 @@ SCHEMA = (
         version INTEGER NOT NULL,
         operator TEXT NOT NULL,
         decided_at TEXT NOT NULL,
+        carried_from TEXT NOT NULL DEFAULT '',
         PRIMARY KEY (run_id, pair_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS packages (
+        run_id TEXT NOT NULL,
+        package_id TEXT NOT NULL,
+        signature TEXT NOT NULL,
+        owner TEXT NOT NULL,
+        status TEXT NOT NULL,
+        pair_count INTEGER NOT NULL,
+        inherited_from TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (run_id, package_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS package_pairs (
+        run_id TEXT NOT NULL,
+        package_id TEXT NOT NULL,
+        pair_key TEXT NOT NULL,
+        pair_id TEXT NOT NULL,
+        valid INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (run_id, package_id, pair_key)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_records_run ON records(run_id)",
     "CREATE INDEX IF NOT EXISTS idx_quarantine_run ON quarantine(run_id)",
     "CREATE INDEX IF NOT EXISTS idx_pairs_run ON pair_scores(run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_packages_run ON packages(run_id)",
+    # 每张关系在同一批次内至多属于一个有效工作包（唯一有效责任人）。
+    """CREATE UNIQUE INDEX IF NOT EXISTS ux_package_pairs_valid
+        ON package_pairs(run_id, pair_key) WHERE valid = 1""",
 )
 
 TABLES = ("runs", "records", "quarantine", "conflicts", "blocks", "block_pairs",
-          "pair_scores", "clusters", "cluster_members", "decisions")
+          "pair_scores", "clusters", "cluster_members", "decisions",
+          "packages", "package_pairs")
 
 
 def db_path() -> Path:
@@ -141,7 +166,15 @@ def init_db(path=None) -> None:
     with connect(path) as conn:
         for statement in SCHEMA:
             conn.execute(statement)
+        _migrate(conn)
         conn.commit()
+
+
+def _migrate(conn) -> None:
+    """老库补列：decisions.carried_from 记录跨批次继承来源。"""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(decisions)")}
+    if columns and "carried_from" not in columns:
+        conn.execute("ALTER TABLE decisions ADD COLUMN carried_from TEXT NOT NULL DEFAULT ''")
 
 
 def reset_db(path=None) -> None:
@@ -399,12 +432,105 @@ def save_decision(decision: dict) -> None:
     with connect() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO decisions (run_id, pair_id, decision, expected_version,"
-            " version, operator, decided_at) VALUES (?,?,?,?,?,?,?)",
+            " version, operator, decided_at, carried_from) VALUES (?,?,?,?,?,?,?,?)",
             (decision["run_id"], decision["pair_id"], decision["decision"],
              decision["expected_version"], decision["version"], decision["operator"],
-             decision["decided_at"]),
+             decision["decided_at"], decision.get("carried_from", "")),
         )
         conn.commit()
+
+
+def carry_decisions(decisions) -> None:
+    """跨批次继承的决定只补不覆盖：本批次已有的现场决定优先。"""
+    with connect() as conn:
+        conn.executemany(
+            "INSERT OR IGNORE INTO decisions (run_id, pair_id, decision, expected_version,"
+            " version, operator, decided_at, carried_from) VALUES (?,?,?,?,?,?,?,?)",
+            [(d["run_id"], d["pair_id"], d["decision"], d["expected_version"], d["version"],
+              d["operator"], d["decided_at"], d.get("carried_from", "")) for d in decisions],
+        )
+        conn.commit()
+
+
+# ---- 复核工作包 ----
+
+def save_package(package: dict, pairs) -> None:
+    """派单落库：已存在同号工作包时整单跳过，保证同批重跑不重复派单。"""
+    with connect() as conn:
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO packages (run_id, package_id, signature, owner, status,"
+            " pair_count, inherited_from, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (package["run_id"], package["package_id"], package["signature"],
+             package["owner"], package["status"], package["pair_count"],
+             package.get("inherited_from", ""), package["created_at"]),
+        )
+        if cursor.rowcount:
+            conn.executemany(
+                "INSERT OR IGNORE INTO package_pairs (run_id, package_id, pair_key, pair_id,"
+                " valid) VALUES (?,?,?,?,1)",
+                [(package["run_id"], package["package_id"], p["pair_key"], p["pair_id"])
+                 for p in pairs],
+            )
+        conn.commit()
+
+
+def invalidate_package(run_id: str, package_id: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE packages SET status = 'invalid'"
+                     " WHERE run_id = ? AND package_id = ?", (run_id, package_id))
+        conn.execute("UPDATE package_pairs SET valid = 0"
+                     " WHERE run_id = ? AND package_id = ?", (run_id, package_id))
+        conn.commit()
+
+
+def list_packages(run_id: str, status: str = "") -> list:
+    with connect() as conn:
+        if status:
+            return _rows(conn, "SELECT * FROM packages WHERE run_id = ? AND status = ?"
+                               " ORDER BY package_id", (run_id, status))
+        return _rows(conn, "SELECT * FROM packages WHERE run_id = ? ORDER BY status,"
+                           " package_id", (run_id,))
+
+
+def get_package(run_id: str, package_id: str):
+    with connect() as conn:
+        return _one(conn, "SELECT * FROM packages WHERE run_id = ? AND package_id = ?",
+                    (run_id, package_id))
+
+
+def list_package_pairs(run_id: str, package_id: str = "", valid_only: bool = False) -> list:
+    sql = "SELECT * FROM package_pairs WHERE run_id = ?"
+    params = [run_id]
+    if package_id:
+        sql += " AND package_id = ?"
+        params.append(package_id)
+    if valid_only:
+        sql += " AND valid = 1"
+    sql += " ORDER BY package_id, pair_key"
+    with connect() as conn:
+        return _rows(conn, sql, tuple(params))
+
+
+def valid_pair_owners(run_id: str) -> list:
+    """有效包与关系的连接视图：每行至多一条（唯一索引保证）。"""
+    with connect() as conn:
+        return _rows(conn,
+                     "SELECT p.pair_key, p.pair_id, p.package_id, k.owner"
+                     " FROM package_pairs p JOIN packages k"
+                     " ON k.run_id = p.run_id AND k.package_id = p.package_id"
+                     " WHERE p.run_id = ? AND p.valid = 1 AND k.status = 'open'"
+                     " ORDER BY p.pair_key", (run_id,))
+
+
+def previous_run_with_packages(run_id: str):
+    """当前批次之前最近一个已派单的批次（严格按建批时间更早）。"""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT r.run_id FROM runs r WHERE (r.created_at, r.run_id) <"
+            " (SELECT created_at, run_id FROM runs WHERE run_id = ?)"
+            " AND EXISTS (SELECT 1 FROM packages p WHERE p.run_id = r.run_id)"
+            " ORDER BY r.created_at DESC, r.run_id DESC LIMIT 1", (run_id,)).fetchone()
+        return row["run_id"] if row else None
 
 
 def count(run_id: str, table: str) -> int:

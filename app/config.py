@@ -68,5 +68,8 @@ SCORE_SCALE = Decimal("0.000001")
 MAX_BLOCK_SIZE = 120
 MAX_CANDIDATES = 4000
 
+# 复核工作包：候选关系按证据环拆分后派给这些复核组；名单固定保证派单确定。
+REVIEW_GROUPS = ("复核一组", "复核二组", "复核三组")
+
 TZ_DISPLAY = "Asia/Shanghai"
 PAGE_SIZE = 60

@@ -1,0 +1,3 @@
+supplier_id,supplier_no,name,tax_id,city,bank_account,erp_source,ref_master_id,ytd_amount,last_update
+S-0201,000201,呼伦贝尔羊绒制品有限公司,,呼和浩特,6222020200099901,ERP-G,,5600.00,2026-04-02
+S-0202,000202,呼伦贝尔羊绒制品有限公司,,包头,6222020200099902,ERP-G,,4300.00,2026-04-02

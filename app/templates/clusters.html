@@ -27,7 +27,7 @@
     <div class="panel-num">{{ clusters|length }} 簇可见 · 合计 {{ ledger.amount_clusters|money }} 元</div>
   </div>
   <table class="tbl">
-    <thead><tr><th>主体</th><th>代表</th><th>税号</th><th class="w-city">城市</th><th class="num">成员</th><th class="num">累计(元)</th><th>状态</th><th>成员分摊</th><th class="spacer"></th></tr></thead>
+    <thead><tr><th>主体</th><th>代表</th><th>税号</th><th class="w-city">城市</th><th class="num">成员</th><th class="num">累计(元)</th><th>状态</th><th>成员分摊</th><th>簇内关系</th><th class="spacer"></th></tr></thead>
     <tbody>
       {% for cluster in clusters %}
       <tr>
@@ -49,6 +49,27 @@
               </tbody>
             </table>
           </details>
+        </td>
+        <td>
+          {% set rels = relations.get(cluster.cluster_id, []) %}
+          {% if rels %}
+          <details class="fold">
+            <summary>{{ rels|length }} 条关系</summary>
+            <table class="tbl tbl-inner">
+              <tbody>
+                {% for rel in rels %}
+                <tr>
+                  <td class="mono">{{ rel.pair_id }}</td>
+                  <td class="mono">{{ rel.left_id }}↔{{ rel.right_id }}</td>
+                  <td>{{ verdicts.get(rel.verdict) }}</td>
+                  <td>{{ '合并' if rel.decision == 'merge' else ('保留' if rel.decision == 'keep' else '—') }}</td>
+                  <td>{% if rel.owner %}<span class="mono">{{ rel.package_id }}</span> {{ rel.owner }}{% else %}—{% endif %}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </details>
+          {% else %}—{% endif %}
         </td>
         <td class="spacer"></td>
       </tr>

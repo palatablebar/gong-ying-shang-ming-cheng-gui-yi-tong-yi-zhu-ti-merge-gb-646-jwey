@@ -13,6 +13,7 @@ PAGES = (
     ("/pairs", "候选对"),
     ("/clusters", "合并簇"),
     ("/reviews", "复核队列"),
+    ("/packages", "复核工作包"),
     ("/export", "主数据导出"),
 )
 

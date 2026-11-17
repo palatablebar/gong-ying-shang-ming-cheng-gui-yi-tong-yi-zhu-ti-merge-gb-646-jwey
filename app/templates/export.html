@@ -16,6 +16,33 @@
 
 <section class="panel">
   <div class="panel-head">
+    <h2 class="panel-title">发布阻断</h2>
+    <div class="panel-num">{{ blockers|length }} 项</div>
+  </div>
+  {% if blockers %}
+  <table class="tbl tbl-tight">
+    <thead><tr><th>原因码</th><th>原因</th><th>工作包</th><th>责任人</th><th class="num">待决</th><th>待决关系</th></tr></thead>
+    <tbody>
+      {% for item in blockers %}
+      <tr>
+        <td class="mono">{{ item.reason_code }}</td>
+        <td>{{ reasons.get(item.reason_code) }}</td>
+        <td class="mono">{{ item.package_id }}</td>
+        <td>{{ item.owner }}</td>
+        <td class="num">{{ item.pending }}</td>
+        <td class="mono">{{ item.pairs|join(' ') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="note">发布只采用当前有效工作包内的复核决定；待决关系清零后阻断解除。</p>
+  {% else %}
+  <p class="empty"><span class="tag tag-ok">无阻断</span> 所有有效工作包均已裁决，主数据可发布。</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-head">
     <h2 class="panel-title">主数据预览</h2>
     <div class="panel-num">前 {{ clusters|length }} 个主体</div>
   </div>

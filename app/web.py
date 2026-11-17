@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from . import store
-from .config import APP_NAME, RULE_VERSION, TZ_DISPLAY
+from .config import APP_NAME, REVIEW_GROUPS, RULE_VERSION, TZ_DISPLAY
 from .manifest import parse_utc
 from .reasons import all_codes
 from .modules.m1_intake import service as intake_service
@@ -20,6 +20,7 @@ from .modules.m3_blocks import service as block_service
 from .modules.m4_pairs import service as pair_service
 from .modules.m5_clusters import service as cluster_service
 from .modules.m6_reviews import service as review_service
+from .modules.m8_packages import service as package_service
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -30,6 +31,7 @@ NAV = (
     ("pairs", "候选对", "/pairs"),
     ("clusters", "合并簇", "/clusters"),
     ("reviews", "复核", "/reviews"),
+    ("packages", "工作包", "/packages"),
     ("export", "导出", "/export"),
 )
 
@@ -201,9 +203,35 @@ def page_clusters(request: Request):
     context.update({
         "clusters": store.list_clusters(run_id)[:40],
         "members": by_cluster,
+        "relations": cluster_relations(run_id),
         "ledger": cluster_service.reconcile(run_id),
     })
     return render(request, "clusters.html", context)
+
+
+def cluster_relations(run_id: str) -> dict:
+    """簇内关系：两端都在簇内的候选对，带判定、决定与有效责任人。"""
+    members = store.list_cluster_members(run_id)
+    cluster_of = {member["supplier_id"]: member["cluster_id"] for member in members}
+    decisions = {item["pair_id"]: item for item in store.list_decisions(run_id)}
+    owners = package_service.owner_map(run_id)
+    relations = {}
+    for pair in store.list_pairs(run_id):
+        left_cluster = cluster_of.get(pair["left_id"])
+        if left_cluster is None or left_cluster != cluster_of.get(pair["right_id"]):
+            continue
+        decision = decisions.get(pair["pair_id"])
+        relations.setdefault(left_cluster, []).append({
+            "pair_id": pair["pair_id"],
+            "left_id": pair["left_id"],
+            "right_id": pair["right_id"],
+            "verdict": pair["verdict"],
+            "score": pair["score"],
+            "decision": decision["decision"] if decision else "",
+            "package_id": owners.get(pair["pair_id"], {}).get("package_id", ""),
+            "owner": owners.get(pair["pair_id"], {}).get("owner", ""),
+        })
+    return relations
 
 
 @router.get("/reviews", response_class=HTMLResponse)
@@ -222,6 +250,21 @@ def page_reviews(request: Request):
     return render(request, "reviews.html", context)
 
 
+@router.get("/packages", response_class=HTMLResponse)
+def page_packages(request: Request):
+    run = current_run()
+    run_id = run["run_id"]
+    items = package_service.packages_view(run_id)
+    context = base_context(request, "packages", "复核工作包", run)
+    context.update({
+        "packages": items,
+        "stats": package_service.stats(run_id),
+        "blockers": package_service.publish_blockers(run_id),
+        "groups": REVIEW_GROUPS,
+    })
+    return render(request, "packages.html", context)
+
+
 @router.get("/export", response_class=HTMLResponse)
 def page_export(request: Request):
     run = current_run()
@@ -233,5 +276,6 @@ def page_export(request: Request):
         "clusters": store.list_clusters(run_id)[:12],
         "quarantine": store.list_quarantine(run_id)[:12],
         "files": json.loads(run.get("files_json") or "[]"),
+        "blockers": package_service.publish_blockers(run_id),
     })
     return render(request, "export.html", context)

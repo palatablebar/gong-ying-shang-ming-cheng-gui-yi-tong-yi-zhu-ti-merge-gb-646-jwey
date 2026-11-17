@@ -4,11 +4,13 @@ from __future__ import annotations
 from ... import store
 from ..m4_pairs import service as pair_service
 from ..m5_clusters import service as cluster_service
+from ..m8_packages import service as package_service
 from . import history, queue, version
 
 
 def prepare(run_id: str) -> dict:
     pair_service.ensure_pairs(run_id)
+    package_service.ensure_packages(run_id)
     records = {record["supplier_id"]: record for record in store.list_records(run_id)}
     decisions = {item["pair_id"]: item for item in store.list_decisions(run_id)}
     return {"records": records, "decisions": decisions}
@@ -17,7 +19,11 @@ def prepare(run_id: str) -> dict:
 def queue_items(run_id: str) -> list:
     prepared = prepare(run_id)
     pairs = store.list_pairs(run_id, "review")
-    return queue.build(pairs, prepared["records"], prepared["decisions"])
+    items = queue.build(pairs, prepared["records"], prepared["decisions"])
+    owners = package_service.owner_map(run_id)
+    for item in items:
+        item.update(owners.get(item["pair_id"], {"package_id": "", "owner": ""}))
+    return items
 
 
 def queue_stats(run_id: str) -> dict:
@@ -40,6 +46,7 @@ def reference_issues(run_id: str) -> list:
 def decide(run_id: str, pair_id: str, decision: str, expected_version: int,
            operator: str = "采购主数据组") -> dict:
     pair_service.ensure_pairs(run_id)
+    package_service.ensure_packages(run_id)
     record = version.decide(run_id, pair_id, decision, expected_version, operator)
     cluster_service.ensure_clusters(run_id)
     return record

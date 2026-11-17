@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head">
+    <h1 class="panel-title">复核工作包</h1>
+    <div class="panel-num">{{ stats.total }} 包 · 进行中 {{ stats.open }} · 已完成 {{ stats.done }} · 待决关系 {{ stats.pending }}</div>
+    <button type="button" class="btn" data-action="sync-packages">同步派单</button>
+  </div>
+  <p class="note">拆分规则：同一证据环（双连通分量）内的关系必须同组裁决，禁止拆开；
+    仅共享单个主体、不共环的关系允许拆给不同组。每张关系只有一个有效责任人。</p>
+  {% if packages %}
+  <table class="tbl">
+    <thead><tr><th>工作包</th><th>责任人</th><th>状态</th><th class="num">关系</th><th class="num">已决</th><th class="num">待决</th><th>来源</th><th>签名</th></tr></thead>
+    <tbody>
+      {% for item in packages %}
+      <tr>
+        <td class="mono">{{ item.package_id }}</td>
+        <td>{{ item.owner }}</td>
+        <td>{% if item.state == 'invalid' %}<span class="tag tag-bad">已失效</span>{% elif item.state == 'done' %}<span class="tag tag-ok">已完成</span>{% else %}<span class="tag">进行中</span>{% endif %}</td>
+        <td class="num">{{ item.pair_count }}</td>
+        <td class="num">{{ item.decided }}</td>
+        <td class="num">{{ item.pending }}</td>
+        <td>{% if item.inherited_from %}<span class="mono">继承 {{ item.inherited_from }}</span>{% else %}新派{% endif %}</td>
+        <td class="mono clip" title="{{ item.signature }}">{{ item.signature[:12] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">当前批次没有待复核关系，无需派单。</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2 class="panel-title">发布阻断</h2>
+    <div class="panel-num">{{ blockers|length }} 项</div>
+  </div>
+  {% if blockers %}
+  <table class="tbl tbl-tight">
+    <thead><tr><th>原因码</th><th>原因</th><th>工作包</th><th>责任人</th><th class="num">待决</th><th>待决关系</th></tr></thead>
+    <tbody>
+      {% for item in blockers %}
+      <tr>
+        <td class="mono">{{ item.reason_code }}</td>
+        <td>{{ reasons.get(item.reason_code) }}</td>
+        <td class="mono">{{ item.package_id }}</td>
+        <td>{{ item.owner }}</td>
+        <td class="num">{{ item.pending }}</td>
+        <td class="mono">{{ item.pairs|join(' ') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty"><span class="tag tag-ok">无阻断</span> 所有有效工作包均已裁决，可发布。</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2 class="panel-title">复核组</h2>
+    <div class="panel-num">{{ groups|length }} 组</div>
+  </div>
+  <p class="note">派单按各组当前持有有效包数均衡分配，新包派给持有最少的组；名单：{{ groups|join('、') }}。</p>
+</section>
+{% endblock %}
